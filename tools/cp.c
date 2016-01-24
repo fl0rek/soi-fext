@@ -111,9 +111,9 @@ int main(int argc, char** argv) {
                         }
 
                         if(fext_dest) {
-                                write_offset += write_inode(fs_dest, ffile_dest, 512, write_offset, buffer);
+                                write_offset += write_inode(fs_dest, ffile_dest, read, write_offset, buffer);
                         } else {
-                                fwrite(buffer, sizeof(char), 512, nfile_dest);
+                                fwrite(buffer, sizeof(char), read, nfile_dest);
                         }
                 } while(read == 512);
         } else
