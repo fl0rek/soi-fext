@@ -106,6 +106,7 @@ int main(int argc, char** argv) {
                 do {
                         if(fext_source) {
                                 read_offset += read = read_inode(fs_src, ffile_src, 512, read_offset, buffer);
+				printf("read: %s, %d", buffer, read);
                         } else {
                                 read = fread(buffer, sizeof(char), 512, nfile_src);
                         }

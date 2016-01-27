@@ -6,7 +6,7 @@ INCLUDE_DIRS=-I../include
 
 CFLAGS=$(CFLAGS_POST) $(INCLUDE_DIRS)
 
-all: mkfs ls cp df
+all: mkfs ls cp df rm
 
 common.o: common.c
 	$(CC) $(CFLAGS) common.c -c -o common.o
@@ -23,7 +23,10 @@ cp: cp.c $(OBJ)
 df: df.c $(OBJ)
 	$(CC) $(CFLAGS) df.c $(OBJ) -o df
 
+rm: rm.c $(OBJ)
+	$(CC) $(CFLAGS) rm.c $(OBJ) -o rm
+
 clean:
-	rm -f mkfs ls common.o cp
+	rm -f mkfs ls common.o cp rm
 
 .PHONY: all clean

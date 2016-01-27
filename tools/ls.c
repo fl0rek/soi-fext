@@ -37,13 +37,13 @@ int main(int argc, char** argv) {
                 filename = argv[optind++];
 
                 uint32_t dir = f_open(p, filename);
-                printf("%s: %u\n", filename, dir);
 
                 if(dir == -1) {
                         printf("Not a directory\n");
                         dir = 0;
                 }
                 uint32_t dir_count = ls(p, dir, 0, 0);
+                printf("%s: %u\n", filename, dir_count);
 
                 for(uint32_t i= 0; i < dir_count; i++) {
                         f_directory_entry fde;

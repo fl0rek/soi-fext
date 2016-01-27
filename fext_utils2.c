@@ -117,6 +117,9 @@ int allocate_block_range(char *ptr, uint32_t start, uint32_t end) {
         f_superblock *sb = (f_superblock*) ptr;
         void *block_bitmap = get_block_bitmap(ptr);
 
+        if(sb->free_blocks_count <= end-start)
+                return -1; //not enough blocks
+
         uint32_t it;
         for(it = start; it < end; it++)
                 if(get_bit(block_bitmap, it))
@@ -155,8 +158,13 @@ uint32_t f_truncate(char *ptr, uint32_t inode_no, size_t newsize) {
         uint32_t more_blocks = ((newsize - (inode->i_blocks *block_size)) / block_size) +1;
         for(uint32_t i = 0; i < more_blocks; i++) {
                 uint32_t new_block = get_empty_block(ptr);
+                if(new_block == -1) {
+                        fprintf(stderr, "Error allocating block");
+                        return -1;
+                }
                 allocate_block(ptr, new_block);
-                add_block(ptr, inode_no, new_block);
+                if(add_block(ptr, inode_no, new_block) == -1)
+                        return -1;
         }
         printf("allocated %u\n", more_blocks);
         return more_blocks;
@@ -173,7 +181,7 @@ void f_stat(char* ptr, uint32_t inode_no, f_stat_struct* stat) {
         stat->size = inode->i_size;
 }
 
-void add_block(char *ptr, uint32_t inode_no, uint32_t block) {
+int add_block(char *ptr, uint32_t inode_no, uint32_t block) {
         f_superblock *sb = (f_superblock*) ptr;
         f_inode *inode = get_inode(ptr, inode_no);
         uint32_t block_size = sb->block_size;
@@ -183,12 +191,16 @@ void add_block(char *ptr, uint32_t inode_no, uint32_t block) {
         } else if(inode->i_blocks -11 < block_size /sizeof(uint32_t)) {
                 if(!inode->i_block[12]) {
                         uint32_t new_block = get_empty_block(ptr);
+                        if(new_block == -1) {
+                                return -1;
+                        }
                         allocate_block(ptr, new_block);
                         inode->i_block[12] = new_block;
                 }
                 uint32_t *block_of_blocks = get_block(ptr, inode->i_block[12]);
                 block = block_of_blocks[inode->i_blocks++ -11];
         }
+        return 0;
 }
 
 int32_t f_chmod(char *ptr, uint32_t inode_no, uint8_t op, uint16_t mod) {
@@ -228,7 +240,8 @@ size_t write_inode(char *ptr, uint32_t inode_no, size_t size, size_t offset, voi
         size_t wrote_bytes = 0;
 
         if(size+offset > inode->i_size) {
-                f_truncate(ptr, inode_no, size+offset);
+                if(-1 == f_truncate(ptr, inode_no, size+offset))
+                        return 0;
                 inode->i_size = size+offset;
         }
 
@@ -320,7 +333,9 @@ size_t read_inode(void* ptr, uint32_t inode_no, size_t size, size_t offset, void
                         if(block_it == last_block_no)
                                 len = inblock_offset_end;
                         memcpy(buff, helper_buffer, len);
+			read_bytes += len;
                         buff += len;
+
                 } else {
                         read_bytes += read_block(ptr, block, buff);
                         buff += read_bytes;
@@ -381,15 +396,28 @@ uint32_t f_open(char *ptr, char* name) {
 uint32_t f_touch(char *ptr, uint32_t parent_inode, char* name) {
         uint32_t dirs = ls(ptr, parent_inode, 0, 0);
 
+	if(open_inode(ptr, parent_inode, name) != -1) {
+		fprintf(stderr, "Already exists: %s", name);
+		raise(SIGABRT);
+		exit(-1);
+	}
+
+
         printf("already at %u dirs\n", dirs);
 
         f_directory_entry new;
         new.inode = allocate_free_inode(ptr);
+        if(new.inode == -1) {
+                return -1;
+	}
         strncpy(new.name, name, 255);
 
         printf("on: %p\n", ptr);
 
         write_inode(ptr, parent_inode, sizeof(f_directory_entry), dirs*sizeof(f_directory_entry), &new);
+
+        dirs = ls(ptr, parent_inode, 0, 0);
+        printf("now at %u dirs", dirs);
 
         return new.inode;
 }
@@ -423,6 +451,12 @@ uint32_t allocate_free_inode(char *ptr) {
         f_superblock *sb = (f_superblock*) ptr;
         void *inode_bitmap = get_inode_bitmap(ptr);
 
+        if(!sb->free_inodes_count) {
+		fprintf(stderr, "Out of inodes\n");
+		raise(SIGABRT);
+                return -1;
+	}
+
         uint32_t i = 0;
         while(get_bit(inode_bitmap, i))
                 i++;
@@ -450,13 +484,82 @@ uint32_t get_empty_block(char *ptr) {
         f_superblock *sb = (f_superblock*) ptr;
         void *block_bitmap = get_block_bitmap(ptr);
 
+        if(!sb->free_blocks_count) {
+		fprintf(stderr, "Out of inodes\n");
+		raise(SIGABRT);
+                return -1;
+	}
+
         uint32_t i = 0;
         while(get_bit(block_bitmap, i))
                 i++;
-        set_bit(block_bitmap, i);
+
+        //set_bit(block_bitmap, i);
+        //sb->free_blocks_count--;
         return i;
 }
 
+uint32_t free_block(char* ptr, uint32_t block_no) {
+        f_superblock *sb = (f_superblock*) ptr;
+        void *block_bitmap = get_block_bitmap(ptr);
+
+        if(get_bit(block_bitmap, block_no)) {
+                clear_bit(block_bitmap, block_no);
+                sb->free_blocks_count++;
+        }
+
+        return 0;
+}
+
+uint32_t free_inode(char* ptr, uint32_t inode_no) {
+        f_superblock *sb = (f_superblock*) ptr;
+        void *inode_bitmap = get_inode_bitmap(ptr);
+
+        if(get_bit(inode_bitmap, inode_no)) {
+                clear_bit(inode_bitmap, inode_no);
+                sb->free_inodes_count++;
+        }
+
+        return 0;
+}
+
+uint32_t f_unlink(char* ptr, uint32_t inode_no) {
+        f_superblock *sb = (f_superblock*) ptr;
+        void *block_bitmap = get_block_bitmap(ptr);
+
+        f_inode *inode = get_inode(ptr, inode);
+
+        for(uint32_t block_it = 0; block_it < inode->i_blocks; block_it++) {
+                free_block(ptr, get_inode_block_no(ptr, inode_no, block_it));
+        }
+
+        free_inode(ptr,inode_no);
+}
+
+uint32_t f_remove_directory_entry(char* ptr, uint32_t parent_dir, uint32_t to_remove) {
+        f_superblock *sb = (f_superblock*) ptr;
+        f_inode* inode = get_inode(ptr, parent_dir);
+
+        uint32_t dirs = ls(ptr, parent_dir, 0, 0);
+        uint32_t i;
+        for(i = 0; i < dirs; i++) {
+                f_directory_entry fde;
+                ls(ptr, parent_dir, i, &fde);
+                if(fde.inode == to_remove)
+                        break;
+        }
+        if(i == dirs)
+                return -1; // not found
+
+        inode->i_size -= sizeof(f_directory_entry);
+        for(; i < dirs-1; i++) {
+                f_directory_entry buff;
+                printf("moving fde %s", buff.name);
+                read_inode(ptr, parent_dir, sizeof(f_directory_entry), (i+1) *sizeof(f_directory_entry), &buff);
+                write_inode(ptr, parent_dir, sizeof(f_directory_entry), i *sizeof(f_directory_entry), &buff);
+        }
+        return 0;
+}
 
 void set_bit(uint32_t *bm, unsigned n) {
         bm[WORD_OFFSET(n)] |= (1 << BIT_OFFSET(n));
@@ -467,4 +570,23 @@ void clear_bit(uint32_t *bm, unsigned n) {
 int get_bit(uint32_t *bm, unsigned n) {
         uint32_t bit = bm[WORD_OFFSET(n)] & (1 << BIT_OFFSET(n));
         return bit != 0;
+}
+
+uint32_t get_inode_block_no(char* ptr, uint32_t inode_no, uint32_t block_no) {
+        f_superblock *sb = (f_superblock*) ptr;
+        f_inode *inode = get_inode(ptr, inode_no);
+        uint32_t block_size = sb->block_size;
+        uint32_t block = 0;
+
+        if(block_no < 12)
+                block = inode->i_block[block_no];
+        else if(block_no -11 < block_size /sizeof(uint32_t)) {
+                uint32_t *block_of_blocks = get_block(ptr, inode->i_block[12]);
+                block = block_of_blocks[block_no -11];
+        } else {
+                fprintf(stderr, "Write out of bounds: %u", block_no);
+                raise(SIGABRT);
+        }
+
+        return block;
 }
